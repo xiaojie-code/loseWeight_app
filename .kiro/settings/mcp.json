@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "unity-mcp": {
+      "url": "http://127.0.0.1:6589/mcp",
+      "disabled": false,
+      "autoApprove": [
+        "read_console",
+        "manage_editor",
+        "manage_camera",
+        "manage_scene",
+        "manage_build",
+        "refresh_unity",
+        "debug_request_context",
+        "execute_code",
+        "unity_node",
+        "unity_scene",
+        "unity_component",
+        "unity_editor",
+        "unity_texture",
+        "unity_asset",
+        "unity_scriptable"
+      ]
+    }
+  }
+}
