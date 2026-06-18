@@ -10,15 +10,11 @@ namespace LoseWeight.CannonGame
     public class CannonPoseInput
     {
         private const float MinConfidence = 0.18f;
-        private const float AimSmoothing = 0.86f;
-        private const float FastAimSmoothing = 0.96f;
-        private const float FastAimDelta = 0.035f;
-        private const float AimDeadZone = 0.003f;
         private const float RelativeAimScale = 5.15f;
-        private const float ControlFilter = 0.38f;
-        private const float FastControlFilter = 0.88f;
-        private const float FastControlDelta = 0.012f;
-        private const float SnapControlDelta = 0.045f;
+        private const float ControlDeadZone = 0.0035f;
+        private const float ControlMaxStep = 0.06f;
+        private const float AimDeadZone = 0.006f;
+        private const float AimMaxStep = 0.36f;
         private const int AimCalibrationFrames = 12;
         private const float ShoulderAimSpanScale = 1.15f;
         private const float MinShoulderAimHalfSpan = 0.15f;
@@ -288,9 +284,11 @@ namespace LoseWeight.CannonGame
                 return controlX;
             }
 
-            float delta = Mathf.Abs(controlX - _filteredControlX);
-            float filter = delta >= SnapControlDelta ? 1f : (delta >= FastControlDelta ? FastControlFilter : ControlFilter);
-            _filteredControlX = Mathf.Lerp(_filteredControlX, controlX, filter);
+            float delta = controlX - _filteredControlX;
+            if (Mathf.Abs(delta) < ControlDeadZone)
+                return _filteredControlX;
+
+            _filteredControlX += Mathf.Clamp(delta, -ControlMaxStep, ControlMaxStep);
             return _filteredControlX;
         }
 
@@ -348,8 +346,15 @@ namespace LoseWeight.CannonGame
             if (_hasAim && aimDelta < AimDeadZone)
                 targetAimX = AimX;
 
-            float smoothing = aimDelta >= FastAimDelta ? FastAimSmoothing : AimSmoothing;
-            AimX = _hasAim ? Mathf.Lerp(AimX, targetAimX, smoothing) : targetAimX;
+            if (_hasAim)
+            {
+                float delta = targetAimX - AimX;
+                AimX += Mathf.Clamp(delta, -AimMaxStep, AimMaxStep);
+            }
+            else
+            {
+                AimX = targetAimX;
+            }
             AimY = 0.62f;
             _hasAim = true;
         }
