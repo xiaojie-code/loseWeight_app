@@ -19,7 +19,8 @@ namespace LoseWeight.Core
                 return;
             }
             Instance = this;
-            DontDestroyOnLoad(gameObject);
+            if (transform.parent == null)
+                DontDestroyOnLoad(gameObject);
         }
 
         public void ChangeState(GameState newState)
@@ -46,6 +47,10 @@ namespace LoseWeight.Core
         RoundEnd,     // 回合结算
         MatchEnd,     // 比赛结算
         Dressing,     // 装扮
-        Profile       // 个人中心
+        Profile,      // 个人中心
+        FruitNinja,   // 水果忍者模式
+        FruitNinjaEnd, // 水果忍者结算
+        CannonGame,   // 大炮射击模式
+        CannonGameEnd // 大炮射击结算
     }
 }

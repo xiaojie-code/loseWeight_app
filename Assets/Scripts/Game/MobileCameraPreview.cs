@@ -11,6 +11,9 @@ namespace LoseWeight.Game
         private RectTransform _rawImageRT;
         private bool _started;
         private bool _isFrontFacing;
+        private Vector2 _lastPreviewSize;
+        private int _lastRotation = int.MinValue;
+        private bool _lastMirrored;
 
         public WebCamTexture CamTexture => _webCamTexture;
         public bool IsRunning => _started && _webCamTexture != null && _webCamTexture.isPlaying;
@@ -53,7 +56,7 @@ namespace LoseWeight.Game
             if (frontCam == null) { ScreenDebugLog.Log("No camera!"); yield break; }
 
             _isFrontFacing = frontCam.Value.isFrontFacing;
-            _webCamTexture = new WebCamTexture(frontCam.Value.name, 480, 640, 30);
+            _webCamTexture = new WebCamTexture(frontCam.Value.name, 360, 480, 24);
             _webCamTexture.Play();
 
             float sw = 0;
@@ -105,7 +108,16 @@ namespace LoseWeight.Game
             float displayH = camW;
 
             float scaleToFit = Mathf.Min(parentW / displayW, parentH / displayH);
-            _rawImageRT.sizeDelta = new Vector2(displayW * scaleToFit, displayH * scaleToFit);
+            Vector2 nextSize = new Vector2(displayW * scaleToFit, displayH * scaleToFit);
+            if (Vector2.Distance(_lastPreviewSize, nextSize) > 0.5f
+                || _lastRotation != angle
+                || _lastMirrored != vMirrored)
+            {
+                _rawImageRT.sizeDelta = nextSize;
+                _lastPreviewSize = nextSize;
+                _lastRotation = angle;
+                _lastMirrored = vMirrored;
+            }
             _rawImageRT.anchorMin = new Vector2(0.5f, 0.5f);
             _rawImageRT.anchorMax = new Vector2(0.5f, 0.5f);
             _rawImageRT.anchoredPosition = Vector2.zero;

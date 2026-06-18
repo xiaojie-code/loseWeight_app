@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大炮射击 - 线框图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #e8eaed;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: 30px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 40px;
+    justify-content: center;
+  }
+  .screen-wrap { text-align: center; }
+  .screen-title {
+    font-size: 16px;
+    color: #333;
+    margin-bottom: 12px;
+    font-weight: bold;
+  }
+  /* 手机竖屏画布 9:16 */
+  .phone {
+    width: 360px;
+    height: 640px;
+    background: #ffffff;
+    background-image:
+      linear-gradient(#eef1f5 1px, transparent 1px),
+      linear-gradient(90deg, #eef1f5 1px, transparent 1px);
+    background-size: 20px 20px;
+    border: 2px solid #4a90e2;
+    border-radius: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* 线框通用样式 */
+  .wf {
+    position: absolute;
+    border: 1.5px solid #9aa7b5;
+    background: rgba(255,255,255,0.6);
+    color: #5a6b7b;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .wf.round { border-radius: 50%; }
+  .wf.pill { border-radius: 999px; }
+  .wf.dashed { border-style: dashed; }
+  .wf.solid-fill { background: #c9d3dd; }
+  .tag {
+    position: absolute;
+    font-size: 10px;
+    color: #4a90e2;
+    background: #eaf3fe;
+    border: 1px solid #4a90e2;
+    border-radius: 3px;
+    padding: 1px 4px;
+    white-space: nowrap;
+  }
+  .note {
+    margin-top: 14px;
+    width: 360px;
+    text-align: left;
+    font-size: 12px;
+    color: #555;
+    line-height: 1.8;
+  }
+  .note b { color: #4a90e2; }
+  /* X 形占位（表示图片/图标位） */
+  .imgbox {
+    position: absolute;
+    border: 1.5px solid #9aa7b5;
+    background: rgba(255,255,255,0.5);
+    border-radius: 6px;
+  }
+  .imgbox::before, .imgbox::after {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: linear-gradient(to top right, transparent 49%, #c2ccd6 49%, #c2ccd6 51%, transparent 51%);
+  }
+  .imgbox::after {
+    background: linear-gradient(to bottom right, transparent 49%, #c2ccd6 49%, #c2ccd6 51%, transparent 51%);
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ 画面1：对局进行中 ============ -->
+<div class="screen-wrap">
+  <div class="screen-title">画面 1 · 对局进行中</div>
+  <div class="phone">
+
+    <!-- 顶部状态栏 -->
+    <div class="wf" style="left:10px; top:10px; width:54px; height:30px;">&lt; 返回</div>
+
+    <!-- 分数 -->
+    <div class="wf pill" style="left:130px; top:14px; width:100px; height:34px;">分数 1500</div>
+    <!-- 倒计时 -->
+    <div class="wf round" style="right:14px; top:12px; width:40px; height:40px;">45s</div>
+    <!-- 连击 -->
+    <div class="wf pill" style="left:140px; top:54px; width:80px; height:26px;">连击 x3</div>
+    <!-- 生命 -->
+    <div class="wf" style="right:14px; top:58px; width:80px; height:26px;">❤❤❤</div>
+
+    <!-- 僵尸目标（从上往下） -->
+    <div class="imgbox" style="left:60px; top:200px; width:46px; height:56px;"></div>
+    <div class="tag" style="left:48px; top:258px;">普通僵尸</div>
+
+    <div class="imgbox" style="left:230px; top:175px; width:40px; height:48px;"></div>
+    <div class="tag" style="left:222px; top:225px;">快速僵尸</div>
+
+    <div class="imgbox" style="left:150px; top:280px; width:60px; height:70px;"></div>
+    <div class="tag" style="left:148px; top:352px;">坦克僵尸(2血)</div>
+
+    <!-- 准星（跟随手移动） -->
+    <div class="wf round" style="left:175px; top:380px; width:50px; height:50px; border-color:#e8623d; color:#e8623d;">⊕</div>
+    <div class="tag" style="left:165px; top:432px;">准星(跟随手移动)</div>
+
+    <!-- 炮弹轨迹（虚线表示飞行） -->
+    <div class="tag" style="left:200px; top:470px;">炮弹飞行轨迹</div>
+
+    <!-- 底部大炮（俯视图：圆底座 + 朝上炮管） -->
+    <div style="position:absolute; left:50%; bottom:10px; transform:translateX(-50%);">
+      <svg width="70" height="80" viewBox="0 0 70 80">
+        <!-- 炮管（朝上的长方形） -->
+        <rect x="27" y="2" width="16" height="50" rx="4" fill="rgba(255,255,255,0.6)" stroke="#9aa7b5" stroke-width="1.5"/>
+        <!-- 圆形底座/转台 -->
+        <circle cx="35" cy="56" r="20" fill="rgba(255,255,255,0.6)" stroke="#9aa7b5" stroke-width="1.5"/>
+      </svg>
+    </div>
+    <div class="tag" style="left:110px; bottom:84px;">大炮(屏幕底部固定)</div>
+
+  </div>
+  <div class="note">
+    <b>布局说明：</b><br>
+    · 左上：摄像头预览窗口 + 实时人体关键点叠加<br>
+    · 顶部：分数 / 连击 / 倒计时 / 生命值<br>
+    · 中部：僵尸从上方出现，缓慢向下移动<br>
+    · 准星跟随用户手臂移动；手臂拉回 = 发射<br>
+    · 底部中央：大炮（固定）
+  </div>
+</div>
+
+<!-- ============ 画面2：教学引导 ============ -->
+<div class="screen-wrap">
+  <div class="screen-title">画面 2 · 教学引导（进入前3秒）</div>
+  <div class="phone">
+    <div class="wf" style="left:10px; top:10px; width:54px; height:30px;">&lt; 返回</div>
+
+    <!-- 教学手势示意 -->
+    <div class="wf dashed" style="left:40px; top:180px; width:280px; height:280px; flex-direction:column; gap:14px; justify-content:center;">
+      <!-- 拉回箭头示意 -->
+      <svg width="120" height="120" viewBox="0 0 120 120">
+        <line x1="60" y1="20" x2="60" y2="90" stroke="#e8623d" stroke-width="4"/>
+        <polygon points="60,102 50,84 70,84" fill="#e8623d"/>
+        <text x="74" y="60" font-size="14" fill="#e8623d">拉回</text>
+      </svg>
+      <div style="font-size:16px; color:#333; font-weight:bold;">伸手瞄准</div>
+      <div style="font-size:16px; color:#e8623d; font-weight:bold;">手臂快速拉回发射</div>
+    </div>
+    <div class="tag" style="left:40px; top:464px;">教学示意图 + 文字（3秒后消失）</div>
+
+    <!-- 底部大炮（俯视图：圆底座 + 朝上炮管） -->
+    <div style="position:absolute; left:50%; bottom:10px; transform:translateX(-50%); display:flex; align-items:center; gap:6px;">
+      <svg width="70" height="80" viewBox="0 0 70 80">
+        <rect x="27" y="2" width="16" height="50" rx="4" fill="rgba(255,255,255,0.6)" stroke="#9aa7b5" stroke-width="1.5"/>
+        <circle cx="35" cy="56" r="20" fill="rgba(255,255,255,0.6)" stroke="#9aa7b5" stroke-width="1.5"/>
+      </svg>
+      <span style="font-size:13px; color:#5a6b7b;">大炮</span>
+    </div>
+  </div>
+  <div class="note">
+    <b>说明：</b><br>
+    · 首次进入显示 3 秒教学<br>
+    · 半透明遮罩 + 手势示意图<br>
+    · 文案："伸手瞄准，快速拉回发射"<br>
+    · 3 秒后自动消失进入倒计时
+  </div>
+</div>
+
+<!-- ============ 画面3：结算页 ============ -->
+<div class="screen-wrap">
+  <div class="screen-title">画面 3 · 对局结算</div>
+  <div class="phone">
+    <!-- 结算面板 -->
+    <div class="wf" style="left:40px; top:120px; width:280px; height:400px; flex-direction:column; gap:14px; padding-top:24px; justify-content:flex-start;">
+      <div style="font-size:18px; color:#333; font-weight:bold;">游戏结束</div>
+
+      <div class="wf pill" style="position:relative; width:200px; height:40px;">总得分　1500</div>
+      <div class="wf pill" style="position:relative; width:200px; height:36px;">击杀数　12</div>
+      <div class="wf pill" style="position:relative; width:200px; height:36px;">命中率　80%</div>
+      <div class="wf pill" style="position:relative; width:200px; height:36px;">最高连击　x5</div>
+
+      <div style="display:flex; gap:14px; margin-top:20px;">
+        <div class="wf" style="position:relative; width:90px; height:44px;">再来一局</div>
+        <div class="wf" style="position:relative; width:90px; height:44px;">返回主页</div>
+      </div>
+      <div class="wf pill" style="position:relative; width:160px; height:38px; margin-top:8px;">分享好友</div>
+    </div>
+    <div class="tag" style="left:40px; top:524px;">结算面板</div>
+  </div>
+  <div class="note">
+    <b>说明：</b><br>
+    · 展示：总得分 / 击杀数 / 命中率 / 最高连击<br>
+    · 操作：再来一局 / 返回主页 / 分享好友<br>
+    · 可接入排行榜入口
+  </div>
+</div>
+
+</body>
+</html>

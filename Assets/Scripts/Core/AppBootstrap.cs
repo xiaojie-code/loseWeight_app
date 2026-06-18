@@ -33,11 +33,10 @@ namespace LoseWeight.Core
         {
             Debug.Log("[Bootstrap] Initializing...");
 
-            // 0. \u521b\u5efa UI \u7ba1\u7406\u5668
+            // 0. UIManager must be authored in the scene by MCP.
             if (LoseWeight.UI.UIManager.Instance == null)
             {
-                var uiGo = new GameObject("UIManager");
-                uiGo.AddComponent<LoseWeight.UI.UIManager>();
+                Debug.LogError("[Bootstrap] Missing MCP UIManager scene node.");
             }
 
             // 1. \u767b\u5f55\uff08App \u7248\uff1a\u5fae\u4fe1 OpenSDK / \u6e38\u5ba2\u767b\u5f55\uff09

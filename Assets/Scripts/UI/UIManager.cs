@@ -43,7 +43,8 @@ namespace LoseWeight.UI
                 return;
             }
             Instance = this;
-            DontDestroyOnLoad(gameObject);
+            if (transform.parent == null)
+                DontDestroyOnLoad(gameObject);
         }
 
         private void Start()
@@ -61,9 +62,6 @@ namespace LoseWeight.UI
             EventBus.Unsubscribe<GameStateChangedEvent>(OnGameStateChanged);
         }
 
-        /// <summary>
-        /// \u52a8\u6001\u521b\u5efa\u6240\u6709\u9875\u9762\uff08\u5982\u679c\u6ca1\u6709\u901a\u8fc7 Inspector \u6307\u5b9a\uff09
-        /// </summary>
         private void InitializePages()
         {
             if (_initialized) return;
@@ -71,42 +69,26 @@ namespace LoseWeight.UI
 
             var canvas = GetComponent<Canvas>();
             if (canvas == null)
-            {
-                canvas = gameObject.AddComponent<Canvas>();
-                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-                canvas.sortingOrder = 200;
-            }
+                Debug.LogError("[UIManager] Missing MCP Canvas on UIManager.");
             else
-            {
                 canvas.sortingOrder = 200;
-            }
 
-            if (GetComponent<CanvasScaler>() == null)
-            {
-                var scaler = gameObject.AddComponent<CanvasScaler>();
-                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-                scaler.referenceResolution = new Vector2(1080, 1920);
-                scaler.matchWidthOrHeight = 0.5f;
-            }
-            if (GetComponent<GraphicRaycaster>() == null)
-                gameObject.AddComponent<GraphicRaycaster>();
-
-            if (_loadingPage == null) _loadingPage = CreatePage<LoadingPage>("LoadingPage");
-            if (_loginPage == null) _loginPage = CreatePage<LoginPage>("LoginPage");
-            if (_mainMenuPage == null) _mainMenuPage = CreatePage<MainMenuPage>("MainMenuPage");
-            if (_characterSelectPage == null) _characterSelectPage = CreatePage<CharacterSelectPage>("CharacterSelectPage");
-            if (_calibrationPage == null) _calibrationPage = CreatePage<CalibrationPage>("CalibrationPage");
-            if (_matchingPage == null) _matchingPage = CreatePage<MatchingPage>("MatchingPage");
-            if (_createRoomPage == null) _createRoomPage = CreatePage<CreateRoomPage>("CreateRoomPage");
-            if (_joinRoomPage == null) _joinRoomPage = CreatePage<JoinRoomPage>("JoinRoomPage");
-            if (_resultPage == null) _resultPage = CreatePage<ResultPage>("ResultPage");
-            if (_rankingPage == null) _rankingPage = CreatePage<RankingPage>("RankingPage");
-            if (_dressingPage == null) _dressingPage = CreatePage<DressingPage>("DressingPage");
-            if (_profilePage == null) _profilePage = CreatePage<ProfilePage>("ProfilePage");
-            if (_settingsPage == null) _settingsPage = CreatePage<SettingsPage>("SettingsPage");
-            if (_recordPage == null) _recordPage = CreatePage<RecordPage>("RecordPage");
-            if (_trainingPage == null) _trainingPage = CreatePage<TrainingPage>("TrainingPage");
-            if (_regionSelectPage == null) _regionSelectPage = CreatePage<RegionSelectPage>("RegionSelectPage");
+            BindPage(ref _loadingPage, "LoadingPage");
+            BindPage(ref _loginPage, "LoginPage");
+            BindPage(ref _mainMenuPage, "MainMenuPage");
+            BindPage(ref _characterSelectPage, "CharacterSelectPage");
+            BindPage(ref _calibrationPage, "CalibrationPage");
+            BindPage(ref _matchingPage, "MatchingPage");
+            BindPage(ref _createRoomPage, "CreateRoomPage");
+            BindPage(ref _joinRoomPage, "JoinRoomPage");
+            BindPage(ref _resultPage, "ResultPage");
+            BindPage(ref _rankingPage, "RankingPage");
+            BindPage(ref _dressingPage, "DressingPage");
+            BindPage(ref _profilePage, "ProfilePage");
+            BindPage(ref _settingsPage, "SettingsPage");
+            BindPage(ref _recordPage, "RecordPage");
+            BindPage(ref _trainingPage, "TrainingPage");
+            BindPage(ref _regionSelectPage, "RegionSelectPage");
 
             // \u9ed8\u8ba4\u5168\u90e8\u9690\u85cf
             HideAllPages();
@@ -116,18 +98,17 @@ namespace LoseWeight.UI
                 ShowPage(_loadingPage);
         }
 
-        private GameObject CreatePage<T>(string pageName) where T : MonoBehaviour
+        private void BindPage(ref GameObject page, string pageName)
         {
-            var go = new GameObject(pageName);
-            go.transform.SetParent(transform, false);
-            var rt = go.AddComponent<RectTransform>();
-            rt.anchorMin = Vector2.zero;
-            rt.anchorMax = Vector2.one;
-            rt.offsetMin = Vector2.zero;
-            rt.offsetMax = Vector2.zero;
-            go.AddComponent<T>();
-            go.SetActive(false);
-            return go;
+            if (page != null) return;
+            var child = FindChild(transform, pageName);
+            if (child == null)
+            {
+                Debug.LogError($"[UIManager] Missing MCP page node: {pageName}");
+                return;
+            }
+            page = child.gameObject;
+            page.SetActive(false);
         }
 
         private void OnGameStateChanged(GameStateChangedEvent evt)
@@ -153,13 +134,27 @@ namespace LoseWeight.UI
                     ShowPage(_createRoomPage);
                     break;
                 case GameState.PreCombat:
-                    ShowPage(_calibrationPage);
+                    // 跳过校准页，直接进入对战
+                    HideAllPages();
+                    GameManager.Instance.ChangeState(GameState.Combat);
                     break;
                 case GameState.Combat:
                     HideAllPages(); // \u5bf9\u6218\u65f6\u9690\u85cf UI \u9875\u9762
                     break;
                 case GameState.MatchEnd:
                     ShowPage(_resultPage);
+                    break;
+                case GameState.FruitNinja:
+                    HideAllPages();
+                    break;
+                case GameState.FruitNinjaEnd:
+                    HideAllPages();
+                    break;
+                case GameState.CannonGame:
+                    HideAllPages();
+                    break;
+                case GameState.CannonGameEnd:
+                    HideAllPages();
                     break;
                 case GameState.Dressing:
                     ShowPage(_dressingPage);
@@ -211,6 +206,16 @@ namespace LoseWeight.UI
             GameManager.Instance.ChangeState(GameState.PreCombat);
         }
 
+        public void OnClickFruitNinja()
+        {
+            GameManager.Instance.ChangeState(GameState.FruitNinja);
+        }
+
+        public void OnClickCannonGame()
+        {
+            GameManager.Instance.ChangeState(GameState.CannonGame);
+        }
+
         public void OnClickTraining()
         {
             ShowPage(_trainingPage);
@@ -254,6 +259,20 @@ namespace LoseWeight.UI
             // \u786e\u4fdd GameState \u4e5f\u540c\u6b65
             if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameState.MainMenu)
                 GameManager.Instance.ChangeState(GameState.MainMenu);
+        }
+
+        private static Transform FindChild(Transform root, string name)
+        {
+            if (root == null) return null;
+            if (root.name == name) return root;
+            var direct = root.Find(name);
+            if (direct != null) return direct;
+            for (int i = 0; i < root.childCount; i++)
+            {
+                var found = FindChild(root.GetChild(i), name);
+                if (found != null) return found;
+            }
+            return null;
         }
     }
 }

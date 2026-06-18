@@ -123,7 +123,10 @@ namespace LoseWeight.Combat
             {
                 _aiController = FindObjectOfType<AICombatController>();
                 if (_aiController == null)
-                    _aiController = gameObject.AddComponent<AICombatController>();
+                {
+                    Debug.LogError("[Combat] Missing MCP AICombatController.");
+                    return;
+                }
                 _aiController.Initialize(_opponent);
             }
             else
