@@ -352,7 +352,7 @@ namespace LoseWeight.CannonGame
             {
                 _mlKitPoseProvider.Initialize(_cameraPreview.CamTexture, new PoseRuntimeOptions
                 {
-                    TargetFps = 18,
+                    TargetFps = 30,
                     UseFrontCamera = true,
                     MirrorOutput = true
                 });

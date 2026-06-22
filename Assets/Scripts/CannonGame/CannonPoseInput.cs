@@ -10,24 +10,34 @@ namespace LoseWeight.CannonGame
     public class CannonPoseInput
     {
         private const float MinConfidence = 0.18f;
-        private const float RelativeAimScale = 5.15f;
-        private const float ControlDeadZone = 0.0035f;
-        private const float ControlMaxStep = 0.06f;
-        private const float AimDeadZone = 0.006f;
-        private const float AimMaxStep = 0.36f;
+        private const float RelativeAimScale = 5.45f;
+        private const float ControlHoldDeadZone = 0.0032f;
+        private const float ControlReleaseDeadZone = 0.009f;
+        private const float ControlSoftMoveDelta = 0.012f;
+        private const float ControlFastMoveDelta = 0.034f;
+        private const float ControlSnapDelta = 0.060f;
+        private const float ControlSlowAlpha = 0.46f;
+        private const float ControlFastAlpha = 0.90f;
+        private const float ControlMaxStep = 0.26f;
+        private const float RawStillDelta = 0.0032f;
+        private const float AimDeadZone = 0.0035f;
+        private const float AimMaxStep = 1f;
+        private const float CorePointConfidence = 0.22f;
+        private const float StickyHandMinScore = 0.18f;
         private const int AimCalibrationFrames = 12;
         private const float ShoulderAimSpanScale = 1.15f;
         private const float MinShoulderAimHalfSpan = 0.15f;
         private const float MaxShoulderAimHalfSpan = 0.32f;
         private const float RaiseWindow = 0.11f;
-        private const float DropDistance = 0.064f;
-        private const float DropVelocity = 0.44f;
-        private const float BigDropDistance = 0.105f;
-        private const float AimLockDropDistance = 0.04f;
-        private const float SingleFrameDropDistance = 0.04f;
-        private const float FireAimLockDuration = 0.42f;
+        private const float DropDistance = 0.068f;
+        private const float DropVelocity = 0.52f;
+        private const float BigDropDistance = 0.118f;
+        private const float FirePreLockDropDistance = 0.038f;
+        private const float AimLockDropDistance = 0.050f;
+        private const float SingleFrameDropDistance = 0.050f;
+        private const float FireAimLockDuration = 0.58f;
         private const float FireCooldown = 0.28f;
-        private const float FireReadyDelay = 0.16f;
+        private const float FireReadyDelay = 0.14f;
         private const float ActiveHandRaiseWindow = 0.34f;
         private const float ActiveHandMinExtension = 0.055f;
         private const float StrongHandScore = 0.32f;
@@ -47,10 +57,16 @@ namespace LoseWeight.CannonGame
         private float _centerControlX;
         private float _calibrationControlSum;
         private float _filteredControlX;
+        private float _lastRawControlX;
         private float _armedSince;
         private int _calibrationSamples;
         private int _dropFrames;
+        private int _stillControlFrames;
+        private int _selectedHandWeakFrames;
+        private int _rawMoveDirection;
+        private int _rawMoveFrames;
         private bool _hasFilteredControlX;
+        private bool _hasLastRawControlX;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         private const bool UsePortraitFrontCameraMapping = true;
@@ -84,10 +100,16 @@ namespace LoseWeight.CannonGame
             _centerControlX = 0f;
             _calibrationControlSum = 0f;
             _filteredControlX = 0f;
+            _lastRawControlX = 0f;
             _armedSince = 0f;
             _calibrationSamples = 0;
             _dropFrames = 0;
+            _stillControlFrames = 0;
+            _selectedHandWeakFrames = 0;
+            _rawMoveDirection = 0;
+            _rawMoveFrames = 0;
             _hasFilteredControlX = false;
+            _hasLastRawControlX = false;
             Charge = 0f;
             HasPose = false;
             FireTriggered = false;
@@ -108,6 +130,12 @@ namespace LoseWeight.CannonGame
             _lockUntil = 0f;
             _armedSince = 0f;
             _dropFrames = 0;
+            _calibratedAimCenter = false;
+            _calibrationControlSum = 0f;
+            _calibrationSamples = 0;
+            ResetControlFilter();
+            AimX = 0.5f;
+            _hasAim = false;
             Charge = 0f;
             FireTriggered = false;
         }
@@ -124,6 +152,11 @@ namespace LoseWeight.CannonGame
                 _aimLockActive = false;
                 _calibratedAimCenter = false;
                 _hasFilteredControlX = false;
+                _hasLastRawControlX = false;
+                _stillControlFrames = 0;
+                _selectedHandWeakFrames = 0;
+                _rawMoveDirection = 0;
+                _rawMoveFrames = 0;
                 _dropFrames = 0;
                 Charge = 0f;
                 AimX = _hasAim ? Mathf.Lerp(AimX, 0.5f, 0.35f) : 0.5f;
@@ -186,16 +219,19 @@ namespace LoseWeight.CannonGame
             float dropAmount = Mathf.Max(0f, wristDown - _peakY);
             Charge = _armed ? Mathf.Clamp01(dropAmount / DropDistance) : 0f;
 
-            bool singleFrameDrop = wristDown - _lastY >= SingleFrameDropDistance;
-            bool downwardMotion = downwardVelocity >= DropVelocity * 0.55f || wristDown - _lastY > 0.01f;
+            float frameDrop = wristDown - _lastY;
+            bool singleFrameDrop = frameDrop >= SingleFrameDropDistance && downwardVelocity >= DropVelocity * 0.75f;
+            bool downwardMotion = frameDrop > 0.012f && downwardVelocity >= DropVelocity * 0.55f;
             _dropFrames = downwardMotion ? Mathf.Min(_dropFrames + 1, 8) : 0;
-            bool startingDrop = _armed && downwardMotion && (dropAmount >= AimLockDropDistance || singleFrameDrop);
-            if (startingDrop)
+            bool likelyDrop = _armed && _dropFrames >= 2 && dropAmount >= FirePreLockDropDistance;
+            bool startingDrop = _armed && _dropFrames >= 2 && (dropAmount >= AimLockDropDistance || singleFrameDrop);
+            if (likelyDrop || startingDrop)
             {
                 if (!_aimLockActive)
                     _lockedAimX = AimX;
                 _aimLockActive = true;
                 _lockUntil = now + FireAimLockDuration;
+                SyncFilteredControlToAim(_lockedAimX);
             }
 
             if (_aimLockActive && now > _lockUntil)
@@ -208,8 +244,8 @@ namespace LoseWeight.CannonGame
 
             bool fireReady = _armed && _armedSince > 0f && now - _armedSince >= FireReadyDelay;
             bool quickDrop = dropAmount >= DropDistance
-                && ((downwardVelocity >= DropVelocity && _dropFrames >= 1) || _dropFrames >= 2 || singleFrameDrop);
-            bool bigDrop = dropAmount >= BigDropDistance;
+                && ((downwardVelocity >= DropVelocity && _dropFrames >= 2) || _dropFrames >= 3 || singleFrameDrop);
+            bool bigDrop = dropAmount >= BigDropDistance && _dropFrames >= 1 && downwardVelocity >= DropVelocity * 0.45f;
             if (fireReady && now >= _cooldownUntil && (quickDrop || bigDrop))
             {
                 FireTriggered = true;
@@ -254,7 +290,7 @@ namespace LoseWeight.CannonGame
                 _lockUntil = 0f;
                 AimX = 0.5f;
                 _hasAim = true;
-                _hasFilteredControlX = false;
+                ResetControlFilter();
             }
 
             controlX = GetFilteredControlX(controlX);
@@ -281,44 +317,91 @@ namespace LoseWeight.CannonGame
             {
                 _filteredControlX = controlX;
                 _hasFilteredControlX = true;
+                _lastRawControlX = controlX;
+                _hasLastRawControlX = true;
                 return controlX;
             }
 
+            float rawDelta = _hasLastRawControlX ? controlX - _lastRawControlX : 0f;
+            _lastRawControlX = controlX;
+            _hasLastRawControlX = true;
+
             float delta = controlX - _filteredControlX;
-            if (Mathf.Abs(delta) < ControlDeadZone)
+            float absDelta = Mathf.Abs(delta);
+            int rawDirection = Mathf.Abs(rawDelta) > RawStillDelta ? (rawDelta > 0f ? 1 : -1) : 0;
+            if (rawDirection == 0)
+            {
+                _rawMoveFrames = 0;
+            }
+            else if (rawDirection == _rawMoveDirection)
+            {
+                _rawMoveFrames = Mathf.Min(_rawMoveFrames + 1, 8);
+            }
+            else
+            {
+                _rawMoveDirection = rawDirection;
+                _rawMoveFrames = 1;
+            }
+
+            if (Mathf.Abs(rawDelta) <= RawStillDelta && absDelta <= ControlReleaseDeadZone)
+            {
+                _stillControlFrames = Mathf.Min(_stillControlFrames + 1, 12);
+                return _filteredControlX;
+            }
+
+            if (absDelta < ControlHoldDeadZone)
+            {
+                _stillControlFrames = Mathf.Min(_stillControlFrames + 1, 12);
+                return _filteredControlX;
+            }
+
+            if (absDelta < ControlSoftMoveDelta && _rawMoveFrames < 2)
                 return _filteredControlX;
 
-            _filteredControlX += Mathf.Clamp(delta, -ControlMaxStep, ControlMaxStep);
+            float followRatio = Mathf.InverseLerp(ControlSoftMoveDelta, ControlFastMoveDelta, absDelta);
+            float alpha = Mathf.Lerp(ControlSlowAlpha, ControlFastAlpha, followRatio);
+            if (absDelta >= ControlSnapDelta)
+                alpha = 1f;
+
+            if (_stillControlFrames >= 3 && Mathf.Abs(rawDelta) <= RawStillDelta && absDelta < ControlSoftMoveDelta)
+                alpha *= 0.65f;
+
+            _stillControlFrames = 0;
+            _filteredControlX += Mathf.Clamp(delta * alpha, -ControlMaxStep, ControlMaxStep);
             return _filteredControlX;
+        }
+
+        private void SyncFilteredControlToAim(float aimX)
+        {
+            if (!_calibratedAimCenter)
+                return;
+
+            _filteredControlX = _centerControlX + (Mathf.Clamp01(aimX) - 0.5f) / RelativeAimScale;
+            _hasFilteredControlX = true;
+            _lastRawControlX = _filteredControlX;
+            _hasLastRawControlX = true;
+            _stillControlFrames = 0;
+            _rawMoveDirection = 0;
+            _rawMoveFrames = 0;
         }
 
         private float GetControlRight(PoseFrame frame, PoseLandmark wrist, bool usingRightHand)
         {
-            float forearmRight = GetArmCenterRight(frame, wrist, usingRightHand);
-            var leftShoulder = frame.GetLandmark(PoseLandmarkIndex.LeftShoulder);
-            var rightShoulder = frame.GetLandmark(PoseLandmarkIndex.RightShoulder);
-            if (leftShoulder.Confidence < MinConfidence || rightShoulder.Confidence < MinConfidence)
-                return forearmRight;
-
-            float shoulderCenterRight = (GetScreenRight(leftShoulder.Position) + GetScreenRight(rightShoulder.Position)) * 0.5f;
-            return forearmRight - shoulderCenterRight;
+            return GetArmCenterRight(frame, wrist, usingRightHand);
         }
 
         private float GetArmCenterRight(PoseFrame frame, PoseLandmark wrist, bool usingRightHand)
         {
             float sum = 0f;
             float weight = 0f;
-            AddControlPoint(wrist, 0.40f, ref sum, ref weight);
+            AddControlPoint(wrist, 0.70f, ref sum, ref weight);
             AddControlPoint(frame.GetLandmark(usingRightHand ? PoseLandmarkIndex.RightElbow : PoseLandmarkIndex.LeftElbow), 0.30f, ref sum, ref weight);
-            AddControlPoint(frame.GetLandmark(usingRightHand ? PoseLandmarkIndex.RightIndex : PoseLandmarkIndex.LeftIndex), 0.18f, ref sum, ref weight);
-            AddControlPoint(frame.GetLandmark(usingRightHand ? PoseLandmarkIndex.RightThumb : PoseLandmarkIndex.LeftThumb), 0.08f, ref sum, ref weight);
-            AddControlPoint(frame.GetLandmark(usingRightHand ? PoseLandmarkIndex.RightPinky : PoseLandmarkIndex.LeftPinky), 0.04f, ref sum, ref weight);
             return weight > 0f ? sum / weight : GetScreenRight(wrist.Position);
         }
 
         private void AddControlPoint(PoseLandmark landmark, float pointWeight, ref float sum, ref float weight)
         {
-            if (landmark.Confidence < MinConfidence * 0.75f)
+            if (landmark.Confidence < CorePointConfidence)
                 return;
 
             float confidenceWeight = pointWeight * Mathf.Clamp01(landmark.Confidence);
@@ -380,11 +463,37 @@ namespace LoseWeight.CannonGame
             bool leftStrong = leftScore >= StrongHandScore;
             bool rightStrong = rightScore >= StrongHandScore;
 
+            if (_lastHandValid)
+            {
+                float selectedScore = _controlUsesRightHand ? rightScore : leftScore;
+                float otherScore = _controlUsesRightHand ? leftScore : rightScore;
+                if (selectedScore >= StickyHandMinScore || (selectedScore > 0f && _selectedHandWeakFrames < 3 && otherScore < StrongHandScore + 0.12f))
+                {
+                    _selectedHandWeakFrames = selectedScore >= StickyHandMinScore ? 0 : _selectedHandWeakFrames + 1;
+                    wrist = _controlUsesRightHand ? rightWrist : leftWrist;
+                    shoulder = _controlUsesRightHand ? rightShoulder : leftShoulder;
+                    usingRightHand = _controlUsesRightHand;
+                    return true;
+                }
+            }
+
             if (leftStrong && rightStrong)
             {
                 wrist = rightWrist;
                 shoulder = rightShoulder;
                 usingRightHand = true;
+            }
+            else if (_lastHandValid && _controlUsesRightHand && rightScore >= StickyHandMinScore)
+            {
+                wrist = rightWrist;
+                shoulder = rightShoulder;
+                usingRightHand = true;
+            }
+            else if (_lastHandValid && !_controlUsesRightHand && leftScore >= StickyHandMinScore)
+            {
+                wrist = leftWrist;
+                shoulder = leftShoulder;
+                usingRightHand = false;
             }
             else if (leftStrong)
             {
@@ -411,7 +520,17 @@ namespace LoseWeight.CannonGame
                 usingRightHand = false;
             }
 
+            _selectedHandWeakFrames = 0;
             return true;
+        }
+
+        private void ResetControlFilter()
+        {
+            _hasFilteredControlX = false;
+            _hasLastRawControlX = false;
+            _stillControlFrames = 0;
+            _rawMoveDirection = 0;
+            _rawMoveFrames = 0;
         }
 
         private bool TryGetShoulderRelativeAim(PoseFrame frame, PoseLandmark wrist, out float aimX)
