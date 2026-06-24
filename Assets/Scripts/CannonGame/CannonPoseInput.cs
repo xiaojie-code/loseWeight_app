@@ -11,19 +11,23 @@ namespace LoseWeight.CannonGame
     {
         private const float MinConfidence = 0.18f;
         private const float RelativeAimScale = 5.45f;
-        private const float ControlHoldDeadZone = 0.0032f;
-        private const float ControlReleaseDeadZone = 0.009f;
-        private const float ControlSoftMoveDelta = 0.012f;
-        private const float ControlFastMoveDelta = 0.034f;
-        private const float ControlSnapDelta = 0.060f;
-        private const float ControlSlowAlpha = 0.46f;
-        private const float ControlFastAlpha = 0.90f;
-        private const float ControlMaxStep = 0.26f;
-        private const float RawStillDelta = 0.0032f;
-        private const float AimDeadZone = 0.0035f;
-        private const float AimMaxStep = 1f;
-        private const float CorePointConfidence = 0.22f;
-        private const float StickyHandMinScore = 0.18f;
+        // One Euro filter on the final aim signal: low jitter when still, low lag
+        // when moving. Lower MinCutoff => steadier at rest; higher Beta => snappier
+        // follow when the hand moves. Tuned aggressively for noisy on-device MLKit.
+        private const float AimFilterMinCutoff = 0.4f;
+        private const float AimFilterBeta = 2.8f;
+        private const float AimFilterDCutoff = 1.0f;
+        private const float CorePointConfidence = 0.30f;
+        // Hand-selection hysteresis: once a control hand is locked, hold it firmly so
+        // the other arm / shoulders / head in frame can't steal control and yank the
+        // aim sideways. Only switch when the held hand stays lost for several frames
+        // AND the other hand is clearly stronger.
+        private const float HandKeepMinScore = 0.10f;
+        private const float HandSwitchMargin = 0.20f;
+        private const int HandSwitchLostFrames = 8;
+        // Anchor the wrist to the (smoothed) shoulder midline so swaying the whole
+        // body left/right doesn't drift the aim.
+        private const float ShoulderCenterSmooth = 0.35f;
         private const int AimCalibrationFrames = 12;
         private const float ShoulderAimSpanScale = 1.15f;
         private const float MinShoulderAimHalfSpan = 0.15f;
@@ -56,17 +60,13 @@ namespace LoseWeight.CannonGame
         private float _lockUntil;
         private float _centerControlX;
         private float _calibrationControlSum;
-        private float _filteredControlX;
-        private float _lastRawControlX;
         private float _armedSince;
         private int _calibrationSamples;
         private int _dropFrames;
-        private int _stillControlFrames;
-        private int _selectedHandWeakFrames;
-        private int _rawMoveDirection;
-        private int _rawMoveFrames;
-        private bool _hasFilteredControlX;
-        private bool _hasLastRawControlX;
+        private int _selectedHandLostFrames;
+        private float _smoothShoulderCenterX;
+        private bool _hasShoulderCenter;
+        private readonly OneEuroFilter _aimFilter = new OneEuroFilter(AimFilterMinCutoff, AimFilterBeta, AimFilterDCutoff);
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         private const bool UsePortraitFrontCameraMapping = true;
@@ -99,17 +99,13 @@ namespace LoseWeight.CannonGame
             _lockUntil = 0f;
             _centerControlX = 0f;
             _calibrationControlSum = 0f;
-            _filteredControlX = 0f;
-            _lastRawControlX = 0f;
             _armedSince = 0f;
             _calibrationSamples = 0;
             _dropFrames = 0;
-            _stillControlFrames = 0;
-            _selectedHandWeakFrames = 0;
-            _rawMoveDirection = 0;
-            _rawMoveFrames = 0;
-            _hasFilteredControlX = false;
-            _hasLastRawControlX = false;
+            _selectedHandLostFrames = 0;
+            _smoothShoulderCenterX = 0f;
+            _hasShoulderCenter = false;
+            _aimFilter.Reset();
             Charge = 0f;
             HasPose = false;
             FireTriggered = false;
@@ -134,6 +130,9 @@ namespace LoseWeight.CannonGame
             _calibrationControlSum = 0f;
             _calibrationSamples = 0;
             ResetControlFilter();
+            _selectedHandLostFrames = 0;
+            _smoothShoulderCenterX = 0f;
+            _hasShoulderCenter = false;
             AimX = 0.5f;
             _hasAim = false;
             Charge = 0f;
@@ -151,17 +150,13 @@ namespace LoseWeight.CannonGame
                 _lastHandValid = false;
                 _aimLockActive = false;
                 _calibratedAimCenter = false;
-                _hasFilteredControlX = false;
-                _hasLastRawControlX = false;
-                _stillControlFrames = 0;
-                _selectedHandWeakFrames = 0;
-                _rawMoveDirection = 0;
-                _rawMoveFrames = 0;
+                _selectedHandLostFrames = 0;
                 _dropFrames = 0;
                 Charge = 0f;
                 AimX = _hasAim ? Mathf.Lerp(AimX, 0.5f, 0.35f) : 0.5f;
                 AimY = 0.62f;
                 _hasAim = true;
+                _aimFilter.Reset(AimX);
                 Hint = "\u8bf7\u7ad9\u5230\u955c\u5934\u5185\uff0c\u5e76\u9732\u51fa\u80a9\u8180\u548c\u624b\u8155";
                 return;
             }
@@ -175,7 +170,7 @@ namespace LoseWeight.CannonGame
 
             if (!_calibratedAimCenter)
             {
-                ApplyAim(0.5f);
+                ApplyAim(0.5f, now);
                 _lastY = wristDown;
                 _lastTime = now;
                 _peakY = wristDown;
@@ -189,7 +184,8 @@ namespace LoseWeight.CannonGame
 
             if (!_lastHandValid)
             {
-                ApplyAim(targetAimX);
+                _aimFilter.Reset(targetAimX);
+                ApplyAim(targetAimX, now);
                 _lastY = wristDown;
                 _lastTime = now;
                 _peakY = wristDown;
@@ -228,10 +224,13 @@ namespace LoseWeight.CannonGame
             if (likelyDrop || startingDrop)
             {
                 if (!_aimLockActive)
+                {
                     _lockedAimX = AimX;
+                    // Snap the filter to the locked aim so the downward punch can't drag it.
+                    _aimFilter.Reset(_lockedAimX);
+                }
                 _aimLockActive = true;
                 _lockUntil = now + FireAimLockDuration;
-                SyncFilteredControlToAim(_lockedAimX);
             }
 
             if (_aimLockActive && now > _lockUntil)
@@ -240,7 +239,7 @@ namespace LoseWeight.CannonGame
             if (_aimLockActive)
                 targetAimX = _lockedAimX;
 
-            ApplyAim(targetAimX);
+            ApplyAim(targetAimX, now);
 
             bool fireReady = _armed && _armedSince > 0f && now - _armedSince >= FireReadyDelay;
             bool quickDrop = dropAmount >= DropDistance
@@ -283,17 +282,21 @@ namespace LoseWeight.CannonGame
             if (_controlUsesRightHand != usingRightHand)
             {
                 _controlUsesRightHand = usingRightHand;
-                _calibrationControlSum = 0f;
-                _calibrationSamples = 0;
-                _calibratedAimCenter = false;
                 _aimLockActive = false;
                 _lockUntil = 0f;
-                AimX = 0.5f;
-                _hasAim = true;
-                ResetControlFilter();
+                if (_calibratedAimCenter)
+                {
+                    // Seamless hand-over: re-anchor the new hand's center so the aim
+                    // stays exactly where it is instead of snapping back to the middle.
+                    _centerControlX = controlX - (AimX - 0.5f) / RelativeAimScale;
+                }
+                else
+                {
+                    _calibrationControlSum = 0f;
+                    _calibrationSamples = 0;
+                }
             }
 
-            controlX = GetFilteredControlX(controlX);
             if (!_calibratedAimCenter)
             {
                 _calibrationControlSum += controlX;
@@ -311,83 +314,25 @@ namespace LoseWeight.CannonGame
             return Mathf.Clamp(targetAimX, 0.02f, 0.98f);
         }
 
-        private float GetFilteredControlX(float controlX)
-        {
-            if (!_hasFilteredControlX)
-            {
-                _filteredControlX = controlX;
-                _hasFilteredControlX = true;
-                _lastRawControlX = controlX;
-                _hasLastRawControlX = true;
-                return controlX;
-            }
-
-            float rawDelta = _hasLastRawControlX ? controlX - _lastRawControlX : 0f;
-            _lastRawControlX = controlX;
-            _hasLastRawControlX = true;
-
-            float delta = controlX - _filteredControlX;
-            float absDelta = Mathf.Abs(delta);
-            int rawDirection = Mathf.Abs(rawDelta) > RawStillDelta ? (rawDelta > 0f ? 1 : -1) : 0;
-            if (rawDirection == 0)
-            {
-                _rawMoveFrames = 0;
-            }
-            else if (rawDirection == _rawMoveDirection)
-            {
-                _rawMoveFrames = Mathf.Min(_rawMoveFrames + 1, 8);
-            }
-            else
-            {
-                _rawMoveDirection = rawDirection;
-                _rawMoveFrames = 1;
-            }
-
-            if (Mathf.Abs(rawDelta) <= RawStillDelta && absDelta <= ControlReleaseDeadZone)
-            {
-                _stillControlFrames = Mathf.Min(_stillControlFrames + 1, 12);
-                return _filteredControlX;
-            }
-
-            if (absDelta < ControlHoldDeadZone)
-            {
-                _stillControlFrames = Mathf.Min(_stillControlFrames + 1, 12);
-                return _filteredControlX;
-            }
-
-            if (absDelta < ControlSoftMoveDelta && _rawMoveFrames < 2)
-                return _filteredControlX;
-
-            float followRatio = Mathf.InverseLerp(ControlSoftMoveDelta, ControlFastMoveDelta, absDelta);
-            float alpha = Mathf.Lerp(ControlSlowAlpha, ControlFastAlpha, followRatio);
-            if (absDelta >= ControlSnapDelta)
-                alpha = 1f;
-
-            if (_stillControlFrames >= 3 && Mathf.Abs(rawDelta) <= RawStillDelta && absDelta < ControlSoftMoveDelta)
-                alpha *= 0.65f;
-
-            _stillControlFrames = 0;
-            _filteredControlX += Mathf.Clamp(delta * alpha, -ControlMaxStep, ControlMaxStep);
-            return _filteredControlX;
-        }
-
-        private void SyncFilteredControlToAim(float aimX)
-        {
-            if (!_calibratedAimCenter)
-                return;
-
-            _filteredControlX = _centerControlX + (Mathf.Clamp01(aimX) - 0.5f) / RelativeAimScale;
-            _hasFilteredControlX = true;
-            _lastRawControlX = _filteredControlX;
-            _hasLastRawControlX = true;
-            _stillControlFrames = 0;
-            _rawMoveDirection = 0;
-            _rawMoveFrames = 0;
-        }
-
         private float GetControlRight(PoseFrame frame, PoseLandmark wrist, bool usingRightHand)
         {
-            return GetArmCenterRight(frame, wrist, usingRightHand);
+            float armCenterX = GetArmCenterRight(frame, wrist, usingRightHand);
+
+            // Anchor against the shoulder midline so swaying the whole body sideways
+            // (or the non-control arm / head drifting) doesn't move the aim. The
+            // shoulder center is itself smoothed because shoulder landmarks jitter too.
+            var leftShoulder = frame.GetLandmark(PoseLandmarkIndex.LeftShoulder);
+            var rightShoulder = frame.GetLandmark(PoseLandmarkIndex.RightShoulder);
+            if (leftShoulder.Confidence >= MinConfidence && rightShoulder.Confidence >= MinConfidence)
+            {
+                float center = (GetScreenRight(leftShoulder.Position) + GetScreenRight(rightShoulder.Position)) * 0.5f;
+                _smoothShoulderCenterX = _hasShoulderCenter
+                    ? Mathf.Lerp(_smoothShoulderCenterX, center, ShoulderCenterSmooth)
+                    : center;
+                _hasShoulderCenter = true;
+            }
+
+            return _hasShoulderCenter ? armCenterX - _smoothShoulderCenterX : armCenterX;
         }
 
         private float GetArmCenterRight(PoseFrame frame, PoseLandmark wrist, bool usingRightHand)
@@ -423,23 +368,19 @@ namespace LoseWeight.CannonGame
                 : Mathf.Clamp01(raw.y);
         }
 
-        private void ApplyAim(float targetAimX)
+        private void ApplyAim(float targetAimX, float now)
         {
-            float aimDelta = Mathf.Abs(targetAimX - AimX);
-            if (_hasAim && aimDelta < AimDeadZone)
-                targetAimX = AimX;
-
             if (_hasAim)
             {
-                float delta = targetAimX - AimX;
-                AimX += Mathf.Clamp(delta, -AimMaxStep, AimMaxStep);
+                AimX = Mathf.Clamp01(_aimFilter.Filter(targetAimX, now));
             }
             else
             {
-                AimX = targetAimX;
+                AimX = Mathf.Clamp01(targetAimX);
+                _aimFilter.Reset(AimX);
+                _hasAim = true;
             }
             AimY = 0.62f;
-            _hasAim = true;
         }
 
         private bool TrySelectHand(PoseFrame frame, out PoseLandmark wrist, out PoseLandmark shoulder, out bool usingRightHand)
@@ -460,77 +401,68 @@ namespace LoseWeight.CannonGame
                 return false;
             }
 
-            bool leftStrong = leftScore >= StrongHandScore;
-            bool rightStrong = rightScore >= StrongHandScore;
-
+            // Already locked onto a control hand: hold it firmly (hysteresis) so the
+            // other arm / shoulders / head cannot steal control and jerk the aim.
             if (_lastHandValid)
             {
                 float selectedScore = _controlUsesRightHand ? rightScore : leftScore;
                 float otherScore = _controlUsesRightHand ? leftScore : rightScore;
-                if (selectedScore >= StickyHandMinScore || (selectedScore > 0f && _selectedHandWeakFrames < 3 && otherScore < StrongHandScore + 0.12f))
+
+                if (selectedScore >= HandKeepMinScore)
                 {
-                    _selectedHandWeakFrames = selectedScore >= StickyHandMinScore ? 0 : _selectedHandWeakFrames + 1;
-                    wrist = _controlUsesRightHand ? rightWrist : leftWrist;
-                    shoulder = _controlUsesRightHand ? rightShoulder : leftShoulder;
-                    usingRightHand = _controlUsesRightHand;
+                    _selectedHandLostFrames = 0;
+                    AssignHand(_controlUsesRightHand, leftWrist, rightWrist, leftShoulder, rightShoulder,
+                        out wrist, out shoulder, out usingRightHand);
                     return true;
                 }
+
+                // Control hand is momentarily weak. Don't switch immediately.
+                _selectedHandLostFrames++;
+                bool lostLongEnough = _selectedHandLostFrames >= HandSwitchLostFrames;
+                bool otherClearlyBetter = otherScore >= StrongHandScore && otherScore >= selectedScore + HandSwitchMargin;
+
+                if (lostLongEnough && otherClearlyBetter)
+                {
+                    _selectedHandLostFrames = 0;
+                    AssignHand(!_controlUsesRightHand, leftWrist, rightWrist, leftShoulder, rightShoulder,
+                        out wrist, out shoulder, out usingRightHand);
+                    return true;
+                }
+
+                // Keep holding the current hand while its wrist is still tracked at all;
+                // otherwise report no pose so the aim simply freezes (never jumps).
+                if (selectedScore > 0f)
+                {
+                    AssignHand(_controlUsesRightHand, leftWrist, rightWrist, leftShoulder, rightShoulder,
+                        out wrist, out shoulder, out usingRightHand);
+                    return true;
+                }
+
+                wrist = default(PoseLandmark);
+                shoulder = default(PoseLandmark);
+                usingRightHand = false;
+                return false;
             }
 
-            if (leftStrong && rightStrong)
-            {
-                wrist = rightWrist;
-                shoulder = rightShoulder;
-                usingRightHand = true;
-            }
-            else if (_lastHandValid && _controlUsesRightHand && rightScore >= StickyHandMinScore)
-            {
-                wrist = rightWrist;
-                shoulder = rightShoulder;
-                usingRightHand = true;
-            }
-            else if (_lastHandValid && !_controlUsesRightHand && leftScore >= StickyHandMinScore)
-            {
-                wrist = leftWrist;
-                shoulder = leftShoulder;
-                usingRightHand = false;
-            }
-            else if (leftStrong)
-            {
-                wrist = leftWrist;
-                shoulder = leftShoulder;
-                usingRightHand = false;
-            }
-            else if (rightStrong)
-            {
-                wrist = rightWrist;
-                shoulder = rightShoulder;
-                usingRightHand = true;
-            }
-            else if (rightScore >= leftScore)
-            {
-                wrist = rightWrist;
-                shoulder = rightShoulder;
-                usingRightHand = true;
-            }
-            else
-            {
-                wrist = leftWrist;
-                shoulder = leftShoulder;
-                usingRightHand = false;
-            }
-
-            _selectedHandWeakFrames = 0;
+            // First lock: pick the stronger hand.
+            _selectedHandLostFrames = 0;
+            AssignHand(rightScore >= leftScore, leftWrist, rightWrist, leftShoulder, rightShoulder,
+                out wrist, out shoulder, out usingRightHand);
             return true;
+        }
+
+        private static void AssignHand(bool useRight, PoseLandmark leftWrist, PoseLandmark rightWrist,
+            PoseLandmark leftShoulder, PoseLandmark rightShoulder,
+            out PoseLandmark wrist, out PoseLandmark shoulder, out bool usingRightHand)
+        {
+            wrist = useRight ? rightWrist : leftWrist;
+            shoulder = useRight ? rightShoulder : leftShoulder;
+            usingRightHand = useRight;
         }
 
         private void ResetControlFilter()
         {
-            _hasFilteredControlX = false;
-            _hasLastRawControlX = false;
-            _stillControlFrames = 0;
-            _rawMoveDirection = 0;
-            _rawMoveFrames = 0;
+            _aimFilter.Reset();
         }
 
         private bool TryGetShoulderRelativeAim(PoseFrame frame, PoseLandmark wrist, out float aimX)
@@ -575,6 +507,82 @@ namespace LoseWeight.CannonGame
 
             float raiseBonus = GetScreenDown(wrist.Position) < GetScreenDown(shoulder.Position) + RaiseWindow ? 0.35f : 0f;
             return wrist.Confidence + extension * 1.4f + raiseBonus;
+        }
+    }
+
+    /// <summary>
+    /// One Euro Filter (Casiez et al. 2012): adaptive low-pass filter for noisy
+    /// interactive signals. It smooths jitter when the value is nearly still and
+    /// reduces lag when the value moves quickly, which is exactly the trade-off
+    /// needed for camera/pose driven aiming.
+    /// </summary>
+    internal sealed class OneEuroFilter
+    {
+        private readonly float _minCutoff;
+        private readonly float _beta;
+        private readonly float _dCutoff;
+        private float _xPrev;
+        private float _dxPrev;
+        private float _lastTime;
+        private bool _hasPrev;
+
+        public OneEuroFilter(float minCutoff, float beta, float dCutoff = 1f)
+        {
+            _minCutoff = Mathf.Max(0.0001f, minCutoff);
+            _beta = beta;
+            _dCutoff = Mathf.Max(0.0001f, dCutoff);
+        }
+
+        /// <summary>Forget history; next Filter call seeds from the incoming value.</summary>
+        public void Reset()
+        {
+            _hasPrev = false;
+            _dxPrev = 0f;
+        }
+
+        /// <summary>Snap the filter state to a known value (e.g. a locked aim).</summary>
+        public void Reset(float value)
+        {
+            _xPrev = value;
+            _dxPrev = 0f;
+            _hasPrev = true;
+            _lastTime = -1f;
+        }
+
+        public float Filter(float x, float timestamp)
+        {
+            if (!_hasPrev)
+            {
+                _xPrev = x;
+                _dxPrev = 0f;
+                _lastTime = timestamp;
+                _hasPrev = true;
+                return x;
+            }
+
+            float dt = _lastTime >= 0f ? timestamp - _lastTime : 1f / 30f;
+            dt = Mathf.Clamp(dt, 0.001f, 0.1f);
+            _lastTime = timestamp;
+
+            float dx = (x - _xPrev) / dt;
+            float edx = LowPass(dx, _dxPrev, Alpha(_dCutoff, dt));
+            _dxPrev = edx;
+
+            float cutoff = _minCutoff + _beta * Mathf.Abs(edx);
+            float xHat = LowPass(x, _xPrev, Alpha(cutoff, dt));
+            _xPrev = xHat;
+            return xHat;
+        }
+
+        private static float Alpha(float cutoff, float dt)
+        {
+            float tau = 1f / (2f * Mathf.PI * cutoff);
+            return 1f / (1f + tau / dt);
+        }
+
+        private static float LowPass(float x, float xPrev, float alpha)
+        {
+            return alpha * x + (1f - alpha) * xPrev;
         }
     }
 }

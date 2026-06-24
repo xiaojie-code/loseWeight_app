@@ -653,6 +653,14 @@ namespace LoseWeight.CannonGame
             _mediaPipeSolutionGo = null;
 #endif
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+            // Release the camera so the next round can re-open it. Without this the
+            // WebCamTexture stays bound to the device and the second session's
+            // camera never produces frames, leaving the game stuck on WaitingPose.
+            if (_cameraPreview != null)
+                _cameraPreview.StopCamera();
+#endif
+
             _poseProvider = null;
             _mlKitPoseProvider = null;
             _poseReadyFrames = 0;

@@ -20,9 +20,34 @@ namespace LoseWeight.Game
 
         public void Initialize(RawImage targetImage)
         {
+            // Release any previously running camera first. CannonGameRoot is a
+            // persistent MCP node that is only SetActive(false) between rounds, so
+            // without this the old WebCamTexture keeps holding the device and the
+            // second round can never re-open the camera (frames stay <=16px).
+            StopCamera();
             _rawImage = targetImage;
             _rawImageRT = targetImage.GetComponent<RectTransform>();
             StartCoroutine(StartCamera());
+        }
+
+        /// <summary>
+        /// Stop and release the camera so it can be re-opened on the next round.
+        /// Safe to call multiple times.
+        /// </summary>
+        public void StopCamera()
+        {
+            StopAllCoroutines();
+            _started = false;
+            if (_webCamTexture != null)
+            {
+                if (_webCamTexture.isPlaying) _webCamTexture.Stop();
+                Destroy(_webCamTexture);
+                _webCamTexture = null;
+            }
+            if (_rawImage != null) _rawImage.texture = null;
+            _lastRotation = int.MinValue;
+            _lastPreviewSize = Vector2.zero;
+            _lastMirrored = false;
         }
 
         private IEnumerator StartCamera()
