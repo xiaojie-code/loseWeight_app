@@ -55,6 +55,8 @@ namespace LoseWeight.CannonGame
         private float _lastPoseFrameTime;
         private Vector2 _recentLockedTarget;
         private float _recentLockedTargetTime = -10f;
+        private float _manualFireCooldownUntil;
+        private Zombie _manualTarget;
 
 #if UNITY_EDITOR || !UNITY_ANDROID
         private GameObject _mediaPipeSolutionGo;
@@ -66,6 +68,8 @@ namespace LoseWeight.CannonGame
         private const float TargetLockWidth = 128f;
         private const float FireTargetLockGrace = 0.48f;
         private const int PoseReadyFramesNeeded = 8;
+        private const bool ManualTapControl = true;
+        private const float ManualFireCooldown = 0.42f;
 
         private void OnEnable()
         {
@@ -111,12 +115,15 @@ namespace LoseWeight.CannonGame
             _lastPoseFrameTime = 0f;
             _recentLockedTarget = Vector2.zero;
             _recentLockedTargetTime = -10f;
+            _manualFireCooldownUntil = 0f;
+            _manualTarget = null;
             _poseInput.Reset();
 
             HideEndButtons();
             HideBulletPool();
             _zombieSpawner.StopSpawning();
-            StartPoseDetection();
+            if (!ManualTapControl)
+                StartPoseDetection();
 
             _hud.UpdateScore(_score);
             _hud.UpdateLives(_lives);
@@ -224,7 +231,9 @@ namespace LoseWeight.CannonGame
         private void NormalizeStaticLabels()
         {
             SetText("BackBtn/Text", "<返回");
-            SetText("Tutorial/Tip", "抬高手臂左右移动瞄准\n快速下落手臂开炮");
+            SetText("Tutorial/Tip", ManualTapControl
+                ? "点击僵尸锁定目标\n大炮会自动开火"
+                : "抬高手臂左右移动瞄准\n快速下落手臂开炮");
             SetText("Retry/Text", "再来一局");
             SetText("Home/Text", "主菜单");
         }
@@ -260,6 +269,16 @@ namespace LoseWeight.CannonGame
         {
             if (_tutorialPanel != null)
                 _tutorialPanel.SetActive(false);
+
+            if (ManualTapControl)
+            {
+                _phase = Phase.Countdown;
+                _countdownTimer = 3f;
+                _hud.ShowStatus("3");
+                _aimController.ShowInputHint("点击僵尸开炮");
+                return;
+            }
+
             _phase = Phase.WaitingPose;
             _hud.ShowStatus("请抬高手臂\n左右移动瞄准");
             _aimController.ShowInputHint("等待手臂姿态检测...");
@@ -450,7 +469,10 @@ namespace LoseWeight.CannonGame
                     break;
 
                 case Phase.Playing:
-                    RefreshTargetLock();
+                    if (ManualTapControl)
+                        UpdateManualTapControls();
+                    else
+                        RefreshTargetLock();
                     _gameTimer -= Time.deltaTime;
                     _hud.UpdateTimer(_gameTimer);
                     if (_gameTimer <= 0f || _lives <= 0)
@@ -461,6 +483,7 @@ namespace LoseWeight.CannonGame
 
         private void UpdateEditorControls()
         {
+            if (ManualTapControl) return;
             if (_aimController == null) return;
             float mx = Mathf.Clamp01(Input.mousePosition.x / Mathf.Max(1f, Screen.width));
             _aimController.UpdateAim(mx, 0.62f);
@@ -468,6 +491,90 @@ namespace LoseWeight.CannonGame
             _aimController.ShowInputHint("Editor：移动鼠标瞄准，点击开炮");
             if (_phase == Phase.Playing && Input.GetMouseButtonDown(0))
                 Fire();
+        }
+
+        private void UpdateManualTapControls()
+        {
+            if (_aimController == null || _zombieSpawner == null) return;
+
+            if (_manualTarget != null)
+            {
+                if (_manualTarget.IsDead || !_manualTarget.gameObject.activeInHierarchy)
+                {
+                    ClearManualTarget(true);
+                    return;
+                }
+
+                Vector2 lockedTargetPos = _manualTarget.GetComponent<RectTransform>().position;
+                _recentLockedTarget = lockedTargetPos;
+                _recentLockedTargetTime = Time.time;
+                _aimController.SetLockedTarget(true, lockedTargetPos);
+                _aimController.ShowInputHint("自动攻击中");
+
+                if (Time.time >= _manualFireCooldownUntil)
+                    FireAtZombie(_manualTarget);
+
+                return;
+            }
+
+            if (!TryGetManualTapPosition(out Vector2 tapPosition))
+                return;
+
+            if (_zombieSpawner.TryFindZombieAtScreenPoint(tapPosition, out Zombie target, out Vector2 targetPos))
+            {
+                _manualTarget = target;
+                _manualFireCooldownUntil = 0f;
+                _recentLockedTarget = targetPos;
+                _recentLockedTargetTime = Time.time;
+                _aimController.SetLockedTarget(true, targetPos);
+                _aimController.ShowInputHint("已锁定目标");
+                Debug.Log($"[CannonGame] Manual tap hit {target.name} at {tapPosition}, target={targetPos}");
+                FireAtZombie(target);
+            }
+            else
+            {
+                Debug.Log($"[CannonGame] Manual tap missed at {tapPosition}");
+                _aimController.ShowInputHint("点击僵尸开炮");
+            }
+        }
+
+        private bool TryGetManualTapPosition(out Vector2 screenPosition)
+        {
+            screenPosition = Vector2.zero;
+
+            if (Input.touchCount > 0)
+            {
+                Touch touch = Input.GetTouch(0);
+                if (touch.phase != TouchPhase.Began)
+                    return false;
+
+                screenPosition = touch.position;
+                return true;
+            }
+
+            if (Input.GetMouseButtonDown(0))
+            {
+                screenPosition = Input.mousePosition;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void ClearManualTarget(bool returnToCenter)
+        {
+            _manualTarget = null;
+            _manualFireCooldownUntil = 0f;
+            _recentLockedTarget = Vector2.zero;
+            _recentLockedTargetTime = -10f;
+
+            if (_aimController == null)
+                return;
+
+            _aimController.SetLockedTarget(false, Vector2.zero);
+            if (returnToCenter)
+                _aimController.UpdateAim(0.5f, 0.62f);
+            _aimController.ShowInputHint("点击僵尸选择目标");
         }
 
         private void RefreshTargetLock()
@@ -526,6 +633,40 @@ namespace LoseWeight.CannonGame
 #endif
         }
 
+        private void FireAtZombie(Zombie target)
+        {
+            if (_phase != Phase.Playing || _aimController == null || target == null) return;
+            if (target.IsDead || !target.gameObject.activeInHierarchy)
+            {
+                ClearManualTarget(true);
+                return;
+            }
+
+            var bullet = GetAvailableBullet();
+            if (bullet == null)
+            {
+                Debug.LogWarning("[CannonGame] BulletPool exhausted. Increase MCP BulletPool size.");
+                return;
+            }
+
+            _shots++;
+            _manualFireCooldownUntil = Time.time + ManualFireCooldown;
+
+            Vector2 start = _aimController.GetCannonScreenPosition();
+            Vector2 end = target.GetComponent<RectTransform>().position;
+            Debug.Log($"[CannonGame] Manual fire target={target.name}, start={start}, end={end}");
+            _aimController.SetLockedTarget(true, end);
+            _aimController.ShowFireEffect();
+
+            bullet.transform.SetParent(_rootGo.transform, false);
+            bullet.gameObject.SetActive(true);
+            bullet.Initialize(start, end, _canvasRT, (startScreen, endScreen) => OnManualBulletArrived(startScreen, endScreen, target));
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+            Handheld.Vibrate();
+#endif
+        }
+
         private Cannonball GetAvailableBullet()
         {
             foreach (var bullet in _bulletPool)
@@ -569,11 +710,54 @@ namespace LoseWeight.CannonGame
             }
         }
 
+        private void OnManualBulletArrived(Vector2 startScreen, Vector2 endScreen, Zombie target)
+        {
+            if (_zombieSpawner == null) return;
+
+            bool hit = _zombieSpawner.TryHitZombie(target, out Vector2 hitPos, out int killScore);
+            if (hit)
+            {
+                _aimController.ShowExplosion(hitPos, true);
+                if (killScore > 0)
+                {
+                    _kills++;
+                    _combo++;
+                    int comboBonus = Mathf.Max(0, _combo - 1) * 40;
+                    int points = killScore + comboBonus;
+                    _score += points;
+                    _hud.UpdateScore(_score);
+                    _hud.UpdateCombo(_combo);
+                    _hud.ShowHitFeedback(true, points);
+                    ClearManualTarget(true);
+                }
+                else
+                {
+                    _hud.ShowHitFeedback(true, 0);
+                    if (target != null && target.gameObject.activeInHierarchy && !target.IsDead)
+                    {
+                        _manualTarget = target;
+                        _aimController.SetLockedTarget(true, target.GetComponent<RectTransform>().position);
+                    }
+                }
+            }
+            else
+            {
+                _combo = 0;
+                _aimController.ShowExplosion(endScreen, false);
+                _hud.UpdateCombo(_combo);
+                _hud.ShowHitFeedback(false, 0);
+                ClearManualTarget(true);
+            }
+        }
+
         private void OnZombieReachedBottom(Zombie zombie)
         {
             if (_phase != Phase.Playing || _lives <= 0) return;
 
             int damage = zombie != null && zombie.Type == ZombieType.Boss ? 2 : 1;
+            if (ManualTapControl && zombie != null && zombie == _manualTarget)
+                ClearManualTarget(true);
+
             _lives = Mathf.Max(0, _lives - damage);
             _combo = 0;
             _hud.UpdateLives(_lives);
@@ -636,6 +820,7 @@ namespace LoseWeight.CannonGame
             }
 
             if (_zombieSpawner != null) _zombieSpawner.StopSpawning();
+            _manualTarget = null;
             HideBulletPool();
             HideEndButtons();
             if (_tutorialPanel != null) _tutorialPanel.SetActive(false);

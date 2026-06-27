@@ -107,35 +107,35 @@ namespace LoseWeight.CannonGame
             switch (type)
             {
                 case ZombieType.Fast:
-                    _hp = _maxHp = 1;
+                    _hp = _maxHp = 2;
                     _scoreValue = 140;
                     _speed = 170f;
                     Size = 66f;
                     _baseColor = new Color(0.38f, 0.78f, 0.9f);
                     break;
                 case ZombieType.Tank:
-                    _hp = _maxHp = 3;
+                    _hp = _maxHp = 6;
                     _scoreValue = 260;
                     _speed = 58f;
                     Size = 112f;
                     _baseColor = new Color(0.38f, 0.62f, 0.38f);
                     break;
                 case ZombieType.Bomber:
-                    _hp = _maxHp = 2;
+                    _hp = _maxHp = 4;
                     _scoreValue = 220;
                     _speed = 92f;
                     Size = 88f;
                     _baseColor = new Color(0.78f, 0.42f, 0.22f);
                     break;
                 case ZombieType.Boss:
-                    _hp = _maxHp = 6;
+                    _hp = _maxHp = 10;
                     _scoreValue = 600;
                     _speed = 42f;
                     Size = 138f;
                     _baseColor = new Color(0.66f, 0.24f, 0.2f);
                     break;
                 default:
-                    _hp = _maxHp = 1;
+                    _hp = _maxHp = 3;
                     _scoreValue = 100;
                     _speed = 96f;
                     Size = 78f;

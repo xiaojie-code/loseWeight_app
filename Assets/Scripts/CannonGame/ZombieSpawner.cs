@@ -90,6 +90,52 @@ namespace LoseWeight.CannonGame
             return FindClosestTargetAlongShot(startScreen, endScreen, lockWidth, out targetPos) != null;
         }
 
+        public bool TryFindZombieAtScreenPoint(Vector2 screenPoint, out Zombie target, out Vector2 targetPos)
+        {
+            _activeZombies.RemoveAll(z => z == null || !z.gameObject.activeInHierarchy);
+            target = null;
+            targetPos = screenPoint;
+            float bestDistance = float.MaxValue;
+
+            foreach (var zombie in _activeZombies)
+            {
+                if (zombie == null || zombie.IsDead) continue;
+
+                var rt = zombie.GetComponent<RectTransform>();
+                if (rt == null) continue;
+
+                Vector2 zombieScreen = rt.position;
+                if (!IsScreenPointVisible(zombieScreen)) continue;
+
+                float tapRadius = Mathf.Max(72f, zombie.Size * 0.92f);
+                float distance = Vector2.Distance(screenPoint, zombieScreen);
+                bool insideRect = RectTransformUtility.RectangleContainsScreenPoint(rt, screenPoint, null);
+                if ((insideRect || distance <= tapRadius) && distance < bestDistance)
+                {
+                    target = zombie;
+                    targetPos = zombieScreen;
+                    bestDistance = distance;
+                }
+            }
+
+            return target != null;
+        }
+
+        public bool TryHitZombie(Zombie target, out Vector2 hitPos, out int score)
+        {
+            hitPos = Vector2.zero;
+            score = 0;
+            if (target == null || target.IsDead || !target.gameObject.activeInHierarchy)
+                return false;
+
+            hitPos = target.GetComponent<RectTransform>().position;
+            if (!IsScreenPointVisible(hitPos))
+                return false;
+
+            score = target.TakeHit();
+            return true;
+        }
+
         private Zombie FindClosestTargetAlongShot(Vector2 startScreen, Vector2 endScreen, float hitWidth, out Vector2 hitPos)
         {
             _activeZombies.RemoveAll(z => z == null || !z.gameObject.activeInHierarchy);

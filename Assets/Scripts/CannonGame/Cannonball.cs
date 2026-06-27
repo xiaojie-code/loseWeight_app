@@ -13,7 +13,7 @@ namespace LoseWeight.CannonGame
         private bool _arrived;
         private System.Action<Vector2, Vector2> _onArrived;
 
-        private const float FlyDuration = 0.16f;
+        private const float FlyDuration = 0.38f;
 
         public void Initialize(Vector2 startScreen, Vector2 endScreen, RectTransform canvas, System.Action<Vector2, Vector2> onArrived)
         {
@@ -32,7 +32,7 @@ namespace LoseWeight.CannonGame
                 return;
             }
 
-            _rt.sizeDelta = new Vector2(34, 34);
+            _rt.sizeDelta = new Vector2(44, 44);
             _rt.localScale = Vector3.one;
             _image.color = new Color(1f, 0.8f, 0f, 1f);
             _image.raycastTarget = false;
